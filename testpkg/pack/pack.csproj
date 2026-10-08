@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>pack</AssemblyName>
+    <RootNamespace>pack</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- LibProsperoPkg se clona al lado de testpkg/ en el runner (ver
+         ci/fpkg-1360-testpkg.yml); ruta relativa desde testpkg/pack/ -->
+    <ProjectReference Include="../../LibProsperoPKG/src/LibProsperoPkg/LibProsperoPkg.csproj" />
+  </ItemGroup>
+
+</Project>

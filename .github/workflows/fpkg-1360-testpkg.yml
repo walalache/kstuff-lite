@@ -1,0 +1,84 @@
+# Workflow: fabrica el .pkg de PS5 de PRUEBA para el experimento FPKG 13.40/13.60
+#
+# USO (fork de EchoStretch/kstuff-lite, sin admin local):
+#  1. Re-ejecuta PASO-1-BUILD.ps1 (sube este workflow + la carpeta testpkg/).
+#  2. Pestaña Actions -> "fpkg-1360-testpkg" -> Run workflow.
+#  3. Descarga el artifact "fpkg-1360-testpkg": el .pkg y SHA256SUMS-TESTPKG.txt.
+#
+# Que hace (todo en GitHub Actions, sin Linux local):
+#  1. Instala el SDK de PS5 de pacbrew (el mismo que el CI oficial de kstuff).
+#  2. Compila el sample "install_app" del SDK (ps5-payload-dev/sdk): su eboot.c
+#     es un "Hello, world" por syscalls SIN dependencias de librerias, y
+#     make_fself.py (python puro) produce un eboot.bin fake-self (formato fPKG).
+#  3. Con LibProsperoPkg (SvenGDK) lo empaqueta en un .pkg debug sin licencia
+#     (LicenseFree): la clave de montaje se deriva del content id + passcode,
+#     igual que los fPKG de <=11.60. Se instala desde
+#     Debug Settings -> Package Installer.
+#
+# Nota: este .pkg sirve SOLO de prueba del flujo de montaje (staging PPR). Con
+# el kstuff control en 13.40 debe fallar con CE-100022-5; con el kstuff
+# experimento veremos hasta donde llega la intercepcion (logs PPR*).
+
+name: fpkg-1360-testpkg
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential clang-18 lld-18 llvm-18 wget python3
+
+      - name: Install PS5 payload toolchain (pacbrew)
+        run: |
+          wget -q https://github.com/ps5-payload-dev/pacbrew-repo/releases/latest/download/ps5-payload-dev.tar.gz
+          sudo tar xf ps5-payload-dev.tar.gz -C /
+          test -d /opt/ps5-payload-sdk/toolchain
+
+      - name: Build sample eboot.bin (SDK install_app)
+        run: |
+          git clone --depth 1 -b master https://github.com/ps5-payload-dev/sdk.git sdk-src
+          mkdir -p sdk-src/samples/install_app/FAKE02932
+          make -C sdk-src/samples/install_app PS5_PAYLOAD_SDK=/opt/ps5-payload-sdk FAKE02932/eboot.bin
+          ls -la sdk-src/samples/install_app/FAKE02932/
+
+      - name: Prepare homebrew folder
+        run: |
+          mkdir -p app
+          cp sdk-src/samples/install_app/FAKE02932/eboot.bin app/eboot.bin
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Clone LibProsperoPkg
+        run: |
+          git clone --depth 1 https://github.com/SvenGDK/LibProsperoPKG.git
+
+      - name: Build and run the packager
+        run: |
+          mkdir -p out
+          dotnet run --project testpkg/pack/pack.csproj -- app out \
+            UP9000-PPSA99099_00-PROSPERO00000000 "LibProsperoPKG test pkg"
+          ls -la out/
+
+      - name: Checksums
+        run: |
+          sha256sum out/*.pkg | tee SHA256SUMS-TESTPKG.txt
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: fpkg-1360-testpkg
+          path: |
+            out/*.pkg
+            SHA256SUMS-TESTPKG.txt
+          if-no-files-found: error

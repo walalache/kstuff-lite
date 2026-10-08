@@ -1,0 +1,88 @@
+# Workflow: compila los kstuff de diagnóstico para el experimento FPKG 13.40/13.60
+#
+# USO (en un FORK de EchoStretch/kstuff-lite, sin admin local):
+#  1. Fork del repo en GitHub (Actions habilitadas por defecto en forks públicos).
+#  2. Sube DOS ficheros al fork en main:
+#       .github/workflows/fpkg-1360-experimento.yml   <- este fichero
+#       fpkg-1360-diagnostic.patch                    <- el patch del kit
+#  3. Pestaña Actions -> "fpkg-1360-experimento" -> Run workflow.
+#  4. Descarga el artifact: kstuff-experimento.elf, kstuff-control.elf,
+#     debug-reader.bin, debug-reader.elf y SHA256SUMS-EXPERIMENTO.txt
+#     (a la consola se envía debug-reader.ELF; el .bin es el ELF aplanado
+#     que sirve para otro cargador, no para elfldr/pldmgr).
+#
+# El checkout NO baja submodulos: el ci-ps5-kstuff-ldr.sh del propio repo los
+# inicializa con HISTORIA COMPLETA (git submodule update --init --recursive),
+# igual que hace el CI oficial. Es necesario: el servidor de BearSSL rechaza
+# la descarga "reducida" (--depth=1) del commit exacto que se necesita.
+#
+# Se compilan DOS builds (ambos con KSTUFF_OBS=1 para leer metricas/logs):
+#   - experimento:  EXTRA_CFLAGS=-DKSTUFF_FPKG_EXPERIMENT=1 (13.00-13.60 armado)
+#   - control:      sin la macro (gate original: <=11.60 armado)
+# EXTRA_CFLAGS se pasa por VARIABLE DE ENTORNO: GNU make la convierte en
+# variable de make y llega tanto a uelf/fpkg.c como al payload que el loader
+# embebe (su sub-make hereda el entorno).
+
+name: fpkg-1360-experimento
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      # Cuidado: los nombres de paso NO pueden llevar ":" (error de YAML).
+      - name: Checkout (sin submodulos)
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install build-essential clang-18 lld-18 xxd yasm nasm
+
+      - name: Install PS5 payload toolchain (pacbrew)
+        run: |
+          wget -q https://github.com/ps5-payload-dev/pacbrew-repo/releases/latest/download/ps5-payload-dev.tar.gz
+          sudo tar xf ps5-payload-dev.tar.gz -C /
+          test -d /opt/ps5-payload-sdk
+
+      - name: Apply diagnostic patch
+        run: |
+          git apply fpkg-1360-diagnostic.patch
+          git diff --stat
+
+      - name: Build experimento (fw13 armado, OBS)
+        env:
+          PS5_PAYLOAD_SDK: /opt/ps5-payload-sdk
+          KSTUFF_OBS: '1'
+          EXTRA_CFLAGS: -DKSTUFF_FPKG_EXPERIMENT=1
+        run: |
+          bash ci-ps5-kstuff-ldr.sh
+          cp ps5-kstuff-ldr/kstuff.elf kstuff-experimento.elf
+          cp ps5-kstuff/debug-reader.bin .
+          cp ps5-kstuff/debug-reader.elf .
+
+      - name: Build control (OBS, gate original)
+        env:
+          PS5_PAYLOAD_SDK: /opt/ps5-payload-sdk
+          KSTUFF_OBS: '1'
+        run: |
+          bash ci-ps5-kstuff-ldr.sh
+          cp ps5-kstuff-ldr/kstuff.elf kstuff-control.elf
+
+      - name: Checksums
+        run: |
+          sha256sum kstuff-experimento.elf kstuff-control.elf debug-reader.bin debug-reader.elf | tee SHA256SUMS-EXPERIMENTO.txt
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: fpkg-1360-diagnostico
+          path: |
+            kstuff-experimento.elf
+            kstuff-control.elf
+            debug-reader.bin
+            debug-reader.elf
+            SHA256SUMS-EXPERIMENTO.txt
+          if-no-files-found: error
